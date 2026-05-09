@@ -4,17 +4,13 @@ import Cors from 'cors';
 import isFQDN from 'validator/lib/isFQDN.js';
 import { Redis } from '@upstash/redis';
 
-// ─────────────────────────────────────────────────────
-// INIT REDIS (Upstash)
-// ─────────────────────────────────────────────────────
+
 const redis = new Redis({
   url: process.env.UPSTASH_REDIS_REST_URL,
   token: process.env.UPSTASH_REDIS_REST_TOKEN,
 });
 
-// ─────────────────────────────────────────────────────
-// CONFIG
-// ─────────────────────────────────────────────────────
+
 const cors = Cors({
   origin: '*',
   methods: ['GET', 'OPTIONS'],
@@ -27,9 +23,6 @@ const FETCH_TIMEOUT = parseInt(process.env.FETCH_TIMEOUT || '10000', 10);
 const RATE_LIMIT_MAX = parseInt(process.env.RATE_LIMIT_MAX || '30', 10);
 const RATE_LIMIT_WINDOW = 60;
 
-// ─────────────────────────────────────────────────────
-// UTILS
-// ─────────────────────────────────────────────────────
 function runMiddleware(req, res, fn) {
   return new Promise((resolve, reject) => {
     fn(req, res, (result) => {
@@ -62,9 +55,7 @@ function sendJson(res, statusCode, data, headers = {}) {
   res.end(JSON.stringify(data));
 }
 
-// ─────────────────────────────────────────────────────
-// RATE LIMIT (Upstash Redis)
-// ─────────────────────────────────────────────────────
+
 async function checkRateLimit(identifier) {
   const key = `rl:${identifier}`;
   const now = Date.now();
@@ -93,9 +84,7 @@ async function checkRateLimit(identifier) {
   };
 }
 
-// ─────────────────────────────────────────────────────
-// CACHE (Upstash Redis)
-// ─────────────────────────────────────────────────────
+
 async function getCache(key) {  const data = await redis.get(key);
   return data ? { ...data, cached: true } : null;
 }
@@ -105,9 +94,7 @@ async function setCache(key, data, ttl = CACHE_TTL) {
     .catch(err => console.error('[CACHE-ERR]', err));
 }
 
-// ─────────────────────────────────────────────────────
-// FETCH WITH TIMEOUT + RETRY
-// ─────────────────────────────────────────────────────
+
 async function fetchWithRetry(url, retries = 3) {
   let lastError;
 
@@ -135,34 +122,27 @@ async function fetchWithRetry(url, retries = 3) {
   throw lastError;
 }
 
-// ─────────────────────────────────────────────────────
-// REQUEST HANDLER
-// ─────────────────────────────────────────────────────
+
 async function handleRequest(req, res) {
   const start = Date.now();
   const { pathname, query } = parse(req.url, true);
 
-  // CORS preflight
   if (req.method === 'OPTIONS') {
     return runMiddleware(req, res, cors).then(() => {
       res.writeHead(204);      res.end();
     });
   }
 
-  // CORS + main logic
   await runMiddleware(req, res, cors);
 
-  // Only handle /api/whois
   if (pathname !== '/api/whois') {
     return sendJson(res, 404, { error: 'Not found' });
   }
 
-  // Method check
   if (req.method !== 'GET') {
     return sendJson(res, 405, { error: 'Method not allowed' });
   }
 
-  // Validate domain
   const rawDomain = query?.domain;
   if (!rawDomain || typeof rawDomain !== 'string') {
     return sendJson(res, 400, { error: 'Domain parameter is required' });
@@ -175,7 +155,6 @@ async function handleRequest(req, res) {
 
   const identifier = getIdentifier(req);
 
-  // Rate limit
   const rateLimit = await checkRateLimit(`ip:${identifier}`);
   const rateHeaders = {
     'X-RateLimit-Limit': String(RATE_LIMIT_MAX),
@@ -190,7 +169,6 @@ async function handleRequest(req, res) {
     }, rateHeaders);
   }
 
-  // Cache check
   const cacheKey = `whois:${domain}`;
   const cached = await getCache(cacheKey);
 
@@ -204,7 +182,6 @@ async function handleRequest(req, res) {
 
     if (isStale) {
       headers['X-Stale'] = 'true';
-      // Background refresh
       fetchWithRetry(`https://rewhois.com/api/whois?domain=${encodeURIComponent(domain)}`)
         .then(data => setCache(cacheKey, data))
         .catch(err => console.error('[STALE-REFRESH]', err));
@@ -213,7 +190,6 @@ async function handleRequest(req, res) {
     return sendJson(res, 200, cached, headers);
   }
 
-  // Fetch upstream
   try {
     const url = `https://rewhois.com/api/whois?domain=${encodeURIComponent(domain)}`;
     const data = await fetchWithRetry(url);
@@ -234,7 +210,6 @@ async function handleRequest(req, res) {
       duration: Date.now() - start
     });
 
-    // Stale-if-error fallback
     const stale = await redis.get(cacheKey);
     if (stale) {
       return sendJson(res, 200, { 
@@ -254,9 +229,6 @@ async function handleRequest(req, res) {
   }
 }
 
-// ─────────────────────────────────────────────────────
-// CREATE SERVER
-// ─────────────────────────────────────────────────────
 const server = http.createServer(async (req, res) => {
   try {
     await handleRequest(req, res);
@@ -270,7 +242,6 @@ server.listen(PORT, () => {
   console.log(`🚀 WHOIS Proxy running at http://localhost:${PORT}/api/whois`);
 });
 
-// Graceful shutdown
 process.on('SIGTERM', () => {
   console.log('🔌 Shutting down gracefully...');
   server.close(() => process.exit(0));
