@@ -1,5 +1,7 @@
+import http from 'http';
+import { parse } from 'url';
 import Cors from 'cors';
-import isFQDN from 'validator/lib/isFQDN';
+import isFQDN from 'validator/lib/isFQDN.js';
 import { Redis } from '@upstash/redis';
 
 // ─────────────────────────────────────────────────────
@@ -14,13 +16,13 @@ const redis = new Redis({
 // CONFIG
 // ─────────────────────────────────────────────────────
 const cors = Cors({
-  origin: '*', // Public endpoint — aman dengan rate limit + cache
+  origin: '*',
   methods: ['GET', 'OPTIONS'],
   allowedHeaders: ['Content-Type'],
 });
 
+const PORT = parseInt(process.env.PORT || '3000', 10);
 const CACHE_TTL = parseInt(process.env.CACHE_TTL || '3600', 10);
-const STALE_TTL = parseInt(process.env.STALE_TTL || '86400', 10); // 24 jam untuk stale cache
 const FETCH_TIMEOUT = parseInt(process.env.FETCH_TIMEOUT || '10000', 10);
 const RATE_LIMIT_MAX = parseInt(process.env.RATE_LIMIT_MAX || '30', 10);
 const RATE_LIMIT_WINDOW = 60;
@@ -39,22 +41,29 @@ function runMiddleware(req, res, fn) {
 
 function normalizeDomain(domain) {
   return domain
-    .trim()
+    ?.trim()
     .toLowerCase()
     .replace(/^https?:\/\//i, '')
     .replace(/\/$/, '')
-    .split('/')[0];
+    .split('/')[0] || '';
 }
-
 function getIdentifier(req) {
-  // Ambil IP pertama dari x-forwarded-for (bisa multiple: "1.1.1.1, 2.2.2.2")  const forwarded = req.headers['x-forwarded-for'];
-  return req.ip || 
+  const forwarded = req.headers['x-forwarded-for'];
+  return req.socket?.remoteAddress || 
          (typeof forwarded === 'string' ? forwarded.split(',')[0].trim() : null) || 
          'unknown';
 }
 
+function sendJson(res, statusCode, data, headers = {}) {
+  res.writeHead(statusCode, {
+    'Content-Type': 'application/json',
+    ...headers
+  });
+  res.end(JSON.stringify(data));
+}
+
 // ─────────────────────────────────────────────────────
-// RATE LIMIT (Upstash Redis - Sorted Set)
+// RATE LIMIT (Upstash Redis)
 // ─────────────────────────────────────────────────────
 async function checkRateLimit(identifier) {
   const key = `rl:${identifier}`;
@@ -62,21 +71,18 @@ async function checkRateLimit(identifier) {
   const windowStart = now - RATE_LIMIT_WINDOW * 1000;
 
   const pipeline = redis.pipeline();
-  pipeline.zremrangebyscore(key, 0, windowStart); // hapus expired
-  pipeline.zadd(key, { score: now, member: `${now}-${Math.random()}` }); // tambah request
-  pipeline.zcard(key); // hitung total
-  pipeline.expire(key, RATE_LIMIT_WINDOW + 10); // auto cleanup
+  pipeline.zremrangebyscore(key, 0, windowStart);
+  pipeline.zadd(key, { score: now, member: `${now}-${Math.random()}` });
+  pipeline.zcard(key);
+  pipeline.expire(key, RATE_LIMIT_WINDOW + 10);
   
   const [, , , count] = await pipeline.exec();
 
-  // FIX: >= karena kita udah insert request sebelum cek
   if (count >= RATE_LIMIT_MAX) {
-    // FIX: Ambil OLDEST (tanpa rev: true) untuk hitung reset time
     const oldest = await redis.zrange(key, 0, 0);
     const reset = oldest[0] 
       ? parseInt(oldest[0].split('-')[0]) + RATE_LIMIT_WINDOW * 1000 
       : now + RATE_LIMIT_WINDOW * 1000;
-    
     return { allowed: false, remaining: 0, reset };
   }
 
@@ -90,13 +96,13 @@ async function checkRateLimit(identifier) {
 // ─────────────────────────────────────────────────────
 // CACHE (Upstash Redis)
 // ─────────────────────────────────────────────────────
-async function getCache(key) {
-  const data = await redis.get(key);
+async function getCache(key) {  const data = await redis.get(key);
   return data ? { ...data, cached: true } : null;
 }
 
 async function setCache(key, data, ttl = CACHE_TTL) {
-  redis.set(key, { ...data, cached: false, timestamp: Date.now() }, { ex: ttl })    .catch(err => console.error('[CACHE-ERR]', err));
+  redis.set(key, { ...data, cached: false, timestamp: Date.now() }, { ex: ttl })
+    .catch(err => console.error('[CACHE-ERR]', err));
 }
 
 // ─────────────────────────────────────────────────────
@@ -112,9 +118,7 @@ async function fetchWithRetry(url, retries = 3) {
     try {
       const res = await fetch(url, {
         signal: controller.signal,
-        headers: { 
-          'User-Agent': 'WHOIS-Proxy/1.0 (+https://domainlu.com)' // FIX: Better User-Agent
-        }
+        headers: { 'User-Agent': 'WHOIS-Proxy/1.0 (+https://domainlu.com)' }
       });
       clearTimeout(timeout);
 
@@ -124,11 +128,7 @@ async function fetchWithRetry(url, retries = 3) {
     } catch (err) {
       clearTimeout(timeout);
       lastError = err;
-      
-      // FIX: Retry juga kalau timeout, kecuali udah attempt terakhir
       if (attempt === retries) throw err;
-      
-      // Exponential backoff
       await new Promise(r => setTimeout(r, 100 * attempt));
     }
   }
@@ -136,82 +136,97 @@ async function fetchWithRetry(url, retries = 3) {
 }
 
 // ─────────────────────────────────────────────────────
-// MAIN HANDLER
+// REQUEST HANDLER
 // ─────────────────────────────────────────────────────
-export default async function handler(req, res) {
+async function handleRequest(req, res) {
   const start = Date.now();
-  const identifier = getIdentifier(req);
+  const { pathname, query } = parse(req.url, true);
 
-  // 1. CORS
-  await runMiddleware(req, res, cors);
-
-  // 2. Method check  if (req.method !== 'GET') {
-    return res.status(405).json({ error: 'Method not allowed' });
+  // CORS preflight
+  if (req.method === 'OPTIONS') {
+    return runMiddleware(req, res, cors).then(() => {
+      res.writeHead(204);      res.end();
+    });
   }
 
-  // 3. Validate domain
-  const rawDomain = req.query?.domain;
+  // CORS + main logic
+  await runMiddleware(req, res, cors);
+
+  // Only handle /api/whois
+  if (pathname !== '/api/whois') {
+    return sendJson(res, 404, { error: 'Not found' });
+  }
+
+  // Method check
+  if (req.method !== 'GET') {
+    return sendJson(res, 405, { error: 'Method not allowed' });
+  }
+
+  // Validate domain
+  const rawDomain = query?.domain;
   if (!rawDomain || typeof rawDomain !== 'string') {
-    return res.status(400).json({ error: 'Domain parameter is required' });
+    return sendJson(res, 400, { error: 'Domain parameter is required' });
   }
 
   const domain = normalizeDomain(rawDomain);
   if (!isFQDN(domain, { require_tld: true })) {
-    return res.status(400).json({ error: 'Invalid domain format' });
+    return sendJson(res, 400, { error: 'Invalid domain format' });
   }
 
-  // 4. Rate limit
+  const identifier = getIdentifier(req);
+
+  // Rate limit
   const rateLimit = await checkRateLimit(`ip:${identifier}`);
-  res.setHeader('X-RateLimit-Limit', RATE_LIMIT_MAX);
-  res.setHeader('X-RateLimit-Remaining', rateLimit.remaining);
-  res.setHeader('X-RateLimit-Reset', Math.ceil(rateLimit.reset / 1000));
+  const rateHeaders = {
+    'X-RateLimit-Limit': String(RATE_LIMIT_MAX),
+    'X-RateLimit-Remaining': String(rateLimit.remaining),
+    'X-RateLimit-Reset': String(Math.ceil(rateLimit.reset / 1000))
+  };
 
   if (!rateLimit.allowed) {
-    return res.status(429).json({ 
+    return sendJson(res, 429, { 
       error: 'Too many requests', 
       retryAfter: Math.ceil((rateLimit.reset - Date.now()) / 1000) 
-    });
+    }, rateHeaders);
   }
 
-  // 5. Cache check
+  // Cache check
   const cacheKey = `whois:${domain}`;
   const cached = await getCache(cacheKey);
 
-  // ✅ STALE-IF-ERROR: Return stale cache kalau ada, meskipun expired
-  if (cached) {
-    const isStale = Date.now() - cached.timestamp > CACHE_TTL * 1000;
-    
-    res.setHeader('X-Cache', 'HIT');
-    res.setHeader('X-Cache-Age', Math.floor((Date.now() - cached.timestamp) / 1000));
-    
+  if (cached) {    const isStale = Date.now() - cached.timestamp > CACHE_TTL * 1000;
+    const headers = {
+      ...rateHeaders,
+      'X-Cache': 'HIT',
+      'X-Cache-Age': String(Math.floor((Date.now() - cached.timestamp) / 1000)),
+      'X-Response-Time': `${Date.now() - start}ms`
+    };
+
     if (isStale) {
-      res.setHeader('X-Stale', 'true');
-      // Trigger background refresh (fire & forget)
+      headers['X-Stale'] = 'true';
+      // Background refresh
       fetchWithRetry(`https://rewhois.com/api/whois?domain=${encodeURIComponent(domain)}`)
-        .then(freshData => setCache(cacheKey, freshData))
+        .then(data => setCache(cacheKey, data))
         .catch(err => console.error('[STALE-REFRESH]', err));
     }
-    
-    return res.status(200).json(cached);
-  }
-  res.setHeader('X-Cache', 'MISS');
 
-  // 6. Fetch upstream
+    return sendJson(res, 200, cached, headers);
+  }
+
+  // Fetch upstream
   try {
     const url = `https://rewhois.com/api/whois?domain=${encodeURIComponent(domain)}`;
     const data = await fetchWithRetry(url);
 
-    // 7. Save cache (fire & forget)
-    setCache(cacheKey, data);
+    setCache(cacheKey, data); // fire & forget
 
-    // 8. Response
-    res.setHeader('Content-Type', 'application/json');
-    res.setHeader('X-Response-Time', `${Date.now() - start}ms`);
-
-    return res.status(200).json(data);
+    return sendJson(res, 200, data, {
+      ...rateHeaders,
+      'X-Cache': 'MISS',
+      'X-Response-Time': `${Date.now() - start}ms`
+    });
 
   } catch (error) {
-    // Log internal only
     console.error('[WHOIS-PROXY]', {
       error: error.message,
       domain,
@@ -219,18 +234,44 @@ export default async function handler(req, res) {
       duration: Date.now() - start
     });
 
-    // ✅ STALE-IF-ERROR: Return stale cache kalau upstream error
+    // Stale-if-error fallback
     const stale = await redis.get(cacheKey);
     if (stale) {
-      res.setHeader('X-Cache', 'STALE');
-      res.setHeader('X-Stale', 'true');
-      res.setHeader('X-Response-Time', `${Date.now() - start}ms`);
-      return res.status(200).json({ ...stale, warning: 'Serving stale data due to upstream error' });
+      return sendJson(res, 200, { 
+        ...stale, 
+        warning: 'Serving stale data due to upstream error' 
+      }, {
+        ...rateHeaders,
+        'X-Cache': 'STALE',
+        'X-Stale': 'true',        'X-Response-Time': `${Date.now() - start}ms`
+      });
     }
 
     const isTimeout = error.name === 'AbortError';
-    return res.status(isTimeout ? 504 : 500).json({
+    return sendJson(res, isTimeout ? 504 : 500, {
       error: isTimeout ? 'Request timeout' : 'Failed to fetch WHOIS data'
-    });
+    }, rateHeaders);
   }
 }
+
+// ─────────────────────────────────────────────────────
+// CREATE SERVER
+// ─────────────────────────────────────────────────────
+const server = http.createServer(async (req, res) => {
+  try {
+    await handleRequest(req, res);
+  } catch (err) {
+    console.error('[SERVER-ERR]', err);
+    sendJson(res, 500, { error: 'Internal server error' });
+  }
+});
+
+server.listen(PORT, () => {
+  console.log(`🚀 WHOIS Proxy running at http://localhost:${PORT}/api/whois`);
+});
+
+// Graceful shutdown
+process.on('SIGTERM', () => {
+  console.log('🔌 Shutting down gracefully...');
+  server.close(() => process.exit(0));
+});
