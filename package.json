@@ -1,22 +1,31 @@
 {
   "name": "whois-api-proxy",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "type": "module",
-  "description": "WHOIS API Proxy with Upstash Redis, CORS, Rate Limiting & Caching",
+  "description": "Production-ready WHOIS API proxy with Upstash Redis caching, rate limiting, and stale-if-error resilience",
   "main": "api/whois.js",
-  "dependencies": {
-    "cors": "^2.8.5",
-    "validator": "^13.11.0",
-    "@upstash/redis": "^1.28.0"
-  },
   "scripts": {
     "dev": "node --watch api/whois.js",
     "start": "node api/whois.js",
-    "lint": "echo 'No linting configured'"
+    "test": "echo 'Run test-rate-limit.sh for manual testing'"
+  },
+  "dependencies": {
+    "@upstash/redis": "^1.28.0",
+    "cors": "^2.8.5",
+    "validator": "^13.11.0"
   },
   "engines": {
     "node": ">=18.0.0"
   },
-  "keywords": ["whois", "proxy", "api", "redis", "upstash"],
+  "keywords": [
+    "whois",
+    "proxy",
+    "api",
+    "redis",
+    "upstash",
+    "rate-limit",
+    "cache"
+  ],
+  "author": "Abik",
   "license": "MIT"
 }
