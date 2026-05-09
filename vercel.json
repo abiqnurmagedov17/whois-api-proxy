@@ -1,0 +1,14 @@
+{
+  "version": 1,
+  "functions": {
+    "api/whois.js": {
+      "runtime": "nodejs20.x"
+    }
+  },
+  "rewrites": [
+    {
+      "source": "/api/(.*)",
+      "destination": "/api/whois.js"
+    }
+  ]
+}
