@@ -14,7 +14,7 @@ const redis = new Redis({
 // CONFIG
 // ─────────────────────────────────────────────────────
 const cors = Cors({
-  origin: ['domainlu', 'http://localhost:7000'],
+  origin: ['domainlu', 'http://localhost:7700'],
   methods: ['GET', 'OPTIONS'],
   allowedHeaders: ['Content-Type'],
 });
