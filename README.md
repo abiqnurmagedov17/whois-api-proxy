@@ -678,10 +678,10 @@ ngrok http 3000
 
 | Version | Date | Changes |
 |---------|------|---------|
-| `2.1.0` | 2024 | ➕ Telegram Bot integration, ⚡ Sliding window rate limiting via `@upstash/ratelimit`, 🔄 Node.js 20.x runtime, 🧹 ESLint config, 📦 New scripts (`dev:bot`, `test`, `deploy`, `lint`) |
-| `2.0.0` | 2024 | 🔄 Migrated to ES Modules, ♻️ Stale-if-error resilience, 📊 Enhanced monitoring headers |
-| `1.1.0` | 2024 | Fixed rate limit logic (check-then-insert), improved result parsing |
-| `1.0.0` | 2024 | Initial release with Redis caching, rate limiting, and basic WHOIS proxy |
+| `2.1.0` | 2026 | ➕ Telegram Bot integration, ⚡ Sliding window rate limiting via `@upstash/ratelimit`, 🔄 Node.js 20.x runtime, 🧹 ESLint config, 📦 New scripts (`dev:bot`, `test`, `deploy`, `lint`) |
+| `2.0.0` | 2026 | 🔄 Migrated to ES Modules, ♻️ Stale-if-error resilience, 📊 Enhanced monitoring headers |
+| `1.1.0` | 2026 | Fixed rate limit logic (check-then-insert), improved result parsing |
+| `1.0.0` | 2026 | Initial release with Redis caching, rate limiting, and basic WHOIS proxy |
 
 ---
 
