@@ -1,10 +1,9 @@
-```markdown
-# 🌐 WHOIS API Proxy + Telegram Bot
+# 🌐 WHOIS API Proxy v2.1.0
 
-> **Production-ready WHOIS lookup proxy** with Upstash Redis caching, atomic rate limiting, stale-if-error resilience, and **Telegram Bot integration**.
+> **Production-ready WHOIS lookup proxy** with Upstash Redis caching, **sliding window rate limiting**, **Telegram Bot integration**, and stale-if-error resilience.
 
 🔗 **Live API**: [`https://whois-api-proxy.vercel.app/api/whois`](https://whois-api-proxy.vercel.app/api/whois)  
-🤖 **Telegram Bot**: [@whois_lookup_bot](https://t.me/whois_lookup_bot) *(ganti dengan username bot Anda)*  
+🤖 **Telegram Bot**: [@WhoisLookupBot](https://t.me/WhoisLookupBot) *(coming soon)*  
 📦 **Source**: [`github.com/abiqnurmagedov17/whois-api-proxy`](https://github.com/abiqnurmagedov17/whois-api-proxy)  
 📄 **License**: MIT
 
@@ -15,71 +14,16 @@
 | Feature | Status | Description |
 |---------|--------|-------------|
 | 🔓 **CORS Enabled** | ✅ | Public endpoint with configurable origin policies |
-| 🤖 **Telegram Bot** | ✅ | WHOIS lookup via Telegram chat commands |
 | 🗄️ **Upstash Redis Cache** | ✅ | Shared cache across instances — no cold start data loss |
-| ⚡ **Atomic Rate Limiting** | ✅ | Per-IP throttling via Redis sorted sets (check-then-insert pattern) |
+| ⚡ **Sliding Window Rate Limit** | ✅ | Precise per-IP throttling via `@upstash/ratelimit` |
+| 🤖 **Telegram Bot Integration** | ✅ | Query WHOIS directly via Telegram with rich formatting |
 | ♻️ **Stale-if-Error** | ✅ | Serve cached data when upstream fails — zero downtime |
 | 🔍 **Domain Validation** | ✅ | Strict FQDN validation via `validator` library + normalization |
 | 🔄 **Retry + Timeout** | ✅ | Automatic retry with exponential backoff + AbortController |
 | 📊 **Monitoring Headers** | ✅ | `X-Cache`, `X-RateLimit-*`, `X-Response-Time` for observability |
 | 🧼 **Input Normalization** | ✅ | Handles `HTTPS://GOOGLE.COM/path` → `google.com` |
-| 🚀 **Serverless Friendly** | ✅ | Runs on Vercel, Railway, Fly.io, or any Node.js 18+ host |
+| 🚀 **Serverless Friendly** | ✅ | Runs on Vercel, Railway, Fly.io, or any Node.js 20+ host |
 | 🛡️ **Graceful Shutdown** | ✅ | Proper SIGTERM handling for clean deployments |
-
----
-
-## 🤖 Telegram Bot
-
-### Bot Commands
-
-| Command | Description |
-|---------|-------------|
-| `/start` | Start the bot and show welcome menu |
-| `/help` | Show help message |
-| `/about` | Bot information and credits |
-| `/ping` | Check bot latency |
-| `/whois <domain>` | Lookup WHOIS information for a domain |
-| **Send domain directly** | Just type `google.com` without slash |
-
-### Example Usage
-
-```
-
-User: /whois google.com
-Bot: 🔍 WHOIS Lookup: google.com
-━━━━━━━━━━━━━━━━━━━━━
-📅 Registrasi: 15 September 1997
-⏰ Kadaluarsa: 14 September 2028
-🏢 Registrar: MarkMonitor Inc.
-🌍 Nameservers:
-• ns1.google.com
-• ns2.google.com
-• ns3.google.com
-• ns4.google.com
-✅ Sisa waktu: 1245 hari
-
-```
-
-### Setup Telegram Bot
-
-1. **Create bot with [@BotFather](https://t.me/botfather)**
-```
-
-/newbot
-Name: WHOIS Lookup Bot
-Username: whois_lookup_bot
-
-```
-
-2. **Set environment variable in Vercel**
-```
-
-TELEGRAM_BOT_TOKEN = 7113899574:AAFvL8qRtuyN3foEl7Q5Yabx7bUyj2oIkCw
-WEBHOOK_URL = https://whois-api-proxy.vercel.app/api/telegram
-
-```
-
-3. **Set webhook** (auto-set on first request with `?set_webhook=true`)
 
 ---
 
@@ -106,53 +50,50 @@ npm install
 
 # Configure environment variables
 cp .env.example .env
-# Edit .env with your Upstash credentials and Telegram token
+# Edit .env with your Upstash + Telegram credentials
 
-# Start development server (API only)
+# Start development server (auto-reload on Node 20+)
 npm run dev
 
-# Start Telegram bot locally (development)
+# Start Telegram bot in development
 npm run dev:bot
 
 # Or run in production mode
 npm start
 ```
 
-Server runs at: http://localhost:3000/api/whois
+Server runs at: `http://localhost:3000/api/whois`  
+Telegram webhook: `http://localhost:3000/api/telegram`
 
 ---
 
-📡 API Usage
+## 📡 API Usage
 
-Endpoint
-
+### WHOIS Endpoint
 ```
 GET /api/whois?domain=example.com
 ```
 
-Parameters
+#### Parameters
+| Parameter | Type   | Required | Description           |
+|-----------|--------|----------|-----------------------|
+| `domain`  | string | ✅ Yes   | Domain name to lookup |
 
-Parameter Type Required Description
-domain string ✅ Yes Domain name to lookup
+#### Example Requests
 
-Example Requests
-
-cURL
-
+**cURL**
 ```bash
 curl "https://whois-api-proxy.vercel.app/api/whois?domain=google.com"
 ```
 
-JavaScript (Fetch API)
-
+**JavaScript (Fetch API)**
 ```javascript
 const res = await fetch('https://whois-api-proxy.vercel.app/api/whois?domain=github.com');
 const data = await res.json();
 console.log(data);
 ```
 
-React Hook Example
-
+**React Hook Example**
 ```jsx
 function useWhois(domain) {
   const [data, setData] = useState(null);
@@ -171,8 +112,7 @@ function useWhois(domain) {
 }
 ```
 
-Python Example
-
+**Python Example**
 ```python
 import requests
 
@@ -185,24 +125,55 @@ print(response.json())
 
 ---
 
-📤 Response Format
+### 🤖 Telegram Bot Usage
 
-✅ Success (200 OK)
+**Start the bot**: [@WhoisLookupBot](https://t.me/WhoisLookupBot) or send `/start`
 
+**Available Commands**:
+| Command | Description |
+|---------|-------------|
+| `/start` | Welcome message + quick start guide |
+| `/help` | Display usage instructions |
+| `/about` | Bot information & tech stack |
+| `/ping` | Check bot latency |
+| `/whois <domain>` | Lookup WHOIS data for a domain |
+
+**Quick Lookup**: Simply send a domain name (e.g., `google.com`) without any command!
+
+**Example Conversation**:
+```
+You: /whois github.com
+Bot: 🔍 WHOIS Lookup: github.com
+     ━━━━━━━━━━━━━━━━━━━━━
+     📅 Registrasi: 15 Oktober 2007
+     ⏰ Kadaluarsa: 15 Oktober 2025
+     ✅ Sisa waktu: 180 hari
+     🏢 Registrar: MarkMonitor Inc.
+     🌍 Nameservers:
+        • dns1.p08.nsone.net
+        • dns2.p08.nsone.net
+     📊 Status: clientDeleteProhibited, clientTransferProhibited
+```
+
+---
+
+## 📤 Response Format
+
+### ✅ Success (200 OK)
 ```json
 {
   "domain": "google.com",
   "registrar": "MarkMonitor Inc.",
-  "creation_date": "1997-09-15",
-  "expiration_date": "2028-09-14",
-  "name_servers": ["ns1.google.com", "ns2.google.com"],
+  "createdDate": "1997-09-15T04:00:00Z",
+  "expiryDate": "2028-09-14T04:00:00Z",
+  "nameservers": ["ns1.google.com", "ns2.google.com"],
   "status": ["clientDeleteProhibited", "clientTransferProhibited"],
-  "updated_date": "2023-09-12"
+  "updatedDate": "2023-09-12T09:30:00Z",
+  "existed": true
 }
 ```
 
-📦 Response Headers
-
+### 📦 Response Headers
 ```http
 X-Cache: HIT                    # or MISS / STALE
 X-Cache-Age: 120                # seconds since cached
@@ -213,104 +184,141 @@ X-RateLimit-Reset: 1735689600   # Unix timestamp for quota reset
 X-Response-Time: 245ms          # request processing duration
 ```
 
-❌ Error Responses
+### ❌ Error Responses
 
-Status Condition Response
-400 Missing domain parameter { "error": "Domain parameter is required" }
-400 Invalid domain format { "error": "Invalid domain format" }
-404 Unknown endpoint { "error": "Not found" }
-405 Non-GET method { "error": "Method not allowed" }
-429 Rate limit exceeded { "error": "Too many requests", "retryAfter": 45 }
-500 Upstream error { "error": "Failed to fetch WHOIS data" }
-504 Request timeout { "error": "Request timeout" }
+| Status | Condition | Response |
+|--------|-----------|----------|
+| `400` | Missing domain parameter | `{ "error": "Domain parameter is required" }` |
+| `400` | Invalid domain format | `{ "error": "Invalid domain format" }` |
+| `404` | Unknown endpoint | `{ "error": "Not found" }` |
+| `405` | Non-GET method | `{ "error": "Method not allowed" }` |
+| `429` | Rate limit exceeded | `{ "error": "Too many requests", "retryAfter": 45 }` |
+| `500` | Upstream error | `{ "error": "Failed to fetch WHOIS data" }` |
+| `504` | Request timeout | `{ "error": "Request timeout" }` |
 
-🔐 Security Note: Error messages are generic in production. Detailed errors are logged server-side only to prevent information leakage.
+> 🔐 **Security Note**: Error messages are generic in production. Detailed errors are logged server-side only to prevent information leakage.
 
 ---
 
-⚙️ Configuration
+## ⚙️ Configuration
 
-Environment Variables
+### Environment Variables
 
-Create a .env file or set these in your hosting platform:
+Create a `.env` file or set these in your hosting platform:
 
-Variable Required Default Description
-UPSTASH_REDIS_REST_URL ✅ Yes — Upstash Redis REST endpoint
-UPSTASH_REDIS_REST_TOKEN ✅ Yes — Upstash Redis API token
-TELEGRAM_BOT_TOKEN ⚠️ For bot — Telegram bot token from @BotFather
-WEBHOOK_URL ⚠️ For bot — Webhook URL for Telegram bot
-CACHE_TTL No 3600 Cache duration for fresh data (seconds)
-STALE_TTL No 86400 Stale cache retention for fallback (seconds)
-FETCH_TIMEOUT No 10000 Fetch timeout for upstream API (milliseconds)
-RATE_LIMIT_MAX No 30 Max requests per IP per window
-RATE_LIMIT_WINDOW No 60 Rate limit window duration (seconds)
-PORT No 3000 Server port for local development
+#### Core Settings
+| Variable | Required | Default | Description |
+|----------|----------|---------|-------------|
+| `UPSTASH_REDIS_REST_URL` | ✅ Yes | — | Upstash Redis REST endpoint |
+| `UPSTASH_REDIS_REST_TOKEN` | ✅ Yes | — | Upstash Redis API token |
+| `CACHE_TTL` | No | `3600` | Cache duration for fresh data (seconds) |
+| `STALE_TTL` | No | `86400` | Stale cache retention for fallback (seconds) |
+| `FETCH_TIMEOUT` | No | `10000` | Fetch timeout for upstream API (milliseconds) |
 
-🔑 Get Upstash credentials:
+#### Rate Limiting
+| Variable | Required | Default | Description |
+|----------|----------|---------|-------------|
+| `RATE_LIMIT_MAX` | No | `30` | Max requests per IP per window |
+| `RATE_LIMIT_WINDOW` | No | `60` | Rate limit window duration (seconds) |
 
-1. Visit console.upstash.com
-2. Create or connect a Redis database
-3. Copy REST API URL and Token
-4. Paste into Vercel Dashboard → Settings → Environment Variables
+#### Telegram Bot *(Optional)*
+| Variable | Required | Default | Description |
+|----------|----------|---------|-------------|
+| `TELEGRAM_BOT_TOKEN` | ❌ No | — | Bot token from @BotFather |
+| `WEBHOOK_URL` | ❌ No | Auto | Webhook URL for Telegram updates |
 
-CORS Configuration
+#### Server
+| Variable | Required | Default | Description |
+|----------|----------|---------|-------------|
+| `PORT` | No | `3000` | Server port for local development |
+| `NODE_ENV` | No | `production` | Environment mode |
 
-Edit the cors initialization in api/whois.js:
+> 🔑 **Get Upstash credentials**:  
+> 1. Visit [console.upstash.com](https://console.upstash.com)  
+> 2. Create or connect a Redis database  
+> 3. Copy **REST API URL** and **Token**  
+> 4. Paste into Vercel Dashboard → Settings → Environment Variables
+
+> 🤖 **Get Telegram Bot Token**:  
+> 1. Start a chat with [@BotFather](https://t.me/BotFather)  
+> 2. Send `/newbot` and follow the instructions  
+> 3. Copy the API token and add to `TELEGRAM_BOT_TOKEN`
+
+### CORS Configuration
+
+Edit the `cors` initialization in `api/whois.js`:
 
 ```javascript
 const cors = Cors({
   origin: '*', // ✅ OK for public WHOIS proxy
   // 🔒 For restricted access, use:
   // origin: ['https://yourdomain.com', 'http://localhost:3000'],
-  methods: ['GET', 'OPTIONS'],
+  methods: ['GET', 'POST', 'OPTIONS'],
   allowedHeaders: ['Content-Type'],
 });
 ```
 
-💡 Using origin: '*' is acceptable here because WHOIS data is public information. Just don't expose sensitive internal APIs through the same proxy.
+> 💡 Using `origin: '*'` is acceptable here because WHOIS data is public information. Just don't expose sensitive internal APIs through the same proxy.
 
 ---
 
-📁 Project Structure
+## 🛠️ Project Structure
 
 ```
 whois-api-proxy/
 ├── api/
-│   ├── whois.js          # Main API proxy + rate limiting + caching
-│   └── telegram.js       # Telegram bot webhook handler
-├── index.html            # Simple web interface for testing
+│   ├── whois.js          # Main HTTP server + WHOIS handler
+│   └── telegram.js       # Telegram Bot webhook handler
+├── test/
+│   └── rate-limit.js     # Rate limit testing utilities
 ├── .env.example          # Template for environment variables
 ├── .gitignore            # Ignored files (node_modules, .env, etc.)
 ├── package.json          # Dependencies + scripts
 ├── package-lock.json     # Lock file for reproducible installs
 ├── README.md             # This file
-├── test-rate-limit.sh    # Optional: rate limit testing script
-└── vercel.json           # Vercel configuration
+├── vercel.json           # Vercel configuration (rewrites, runtime)
+└── eslint.config.mjs     # ESLint configuration
 ```
 
 ---
 
-🔒 Security & Best Practices
+## 🔄 Available Scripts
 
-✅ Implemented
+```json
+{
+  "scripts": {
+    "dev": "node --watch api/whois.js",      // Dev server with auto-reload
+    "dev:bot": "node --watch api/telegram.js", // Dev Telegram bot
+    "start": "node api/whois.js",             // Production server
+    "test": "node test/rate-limit.js",        // Run rate limit tests
+    "deploy": "vercel --prod",                // Deploy to Vercel production
+    "lint": "eslint api/*.js"                 // Lint JavaScript files
+  }
+}
+```
 
-1. Rate Limiting: Atomic per-IP throttling via Redis sorted sets (check-then-insert pattern)
-2. Input Validation: Domains validated with validator.isFQDN() + aggressive normalization
-3. Error Handling: Internal errors logged server-side; clients receive generic, safe messages
-4. Timeout Protection: Fetch requests abort after configurable timeout to prevent hanging
-5. Redis Security: Tokens stored in environment variables — never committed to repository
-6. CORS: Public by default; easily restrict origin for private frontend integration
+---
 
-🔧 Recommended for Production
+## 🔒 Security & Best Practices
 
+### ✅ Implemented
+1. **Sliding Window Rate Limiting**: Precise throttling via `@upstash/ratelimit`
+2. **Input Validation**: Domains validated with `validator.isFQDN()` + aggressive normalization
+3. **Error Handling**: Internal errors logged server-side; clients receive generic, safe messages
+4. **Timeout Protection**: Fetch requests abort after configurable timeout to prevent hanging
+5. **Redis Security**: Tokens stored in environment variables — never committed to repository
+6. **CORS**: Public by default; easily restrict `origin` for private frontend integration
+7. **Telegram Bot Security**: Per-user cooldown + input validation + HTML sanitization
+
+### 🔧 Recommended for Production
 ```bash
 # 1. Restrict CORS origin if using with specific frontend
 # Edit api/whois.js:
 origin: ['https://yourdomain.com']
 
 # 2. Enable debug logging temporarily for troubleshooting
-// In checkRateLimit():
-console.log('[RATE-LIMIT]', { identifier, count, limit: RATE_LIMIT_MAX });
+// In rate limit handler:
+console.log('[RATE-LIMIT]', { identifier, remaining, limit: RATE_LIMIT_MAX });
 
 # 3. Monitor Redis usage
 # Visit: https://console.upstash.com → Your Database → Metrics
@@ -321,16 +329,16 @@ console.log('[RATE-LIMIT]', { identifier, count, limit: RATE_LIMIT_MAX });
 # 5. Use a custom domain + HTTPS
 # Vercel: Project Settings → Domains → Add your domain
 
-# 6. Keep Telegram bot token secret
-# Never commit TELEGRAM_BOT_TOKEN to repository
+# 6. Secure Telegram webhook
+// Verify webhook requests with Telegram's secret token
+// Add IP allowlist for Telegram webhook IPs
 ```
 
 ---
 
-🧪 Testing
+## 🧪 Testing
 
-Basic Tests
-
+### Basic API Tests
 ```bash
 # ✅ Valid lookup
 curl -i "http://localhost:3000/api/whois?domain=github.com"
@@ -349,12 +357,10 @@ curl -i "http://localhost:3000/api/whois?domain=vercel.com"
 curl -i "http://localhost:3000/api/whois?domain=vercel.com"
 ```
 
-Rate Limit Testing
-
+### Rate Limit Testing
 ```bash
 # Using the included test script
-chmod +x test-rate-limit.sh
-./test-rate-limit.sh
+npm test
 
 # Or manually spam requests (default limit: 30/min)
 for i in {1..35}; do 
@@ -364,20 +370,32 @@ done
 # Expected: Requests 1-30 succeed, 31+ return "Too many requests"
 ```
 
-Telegram Bot Testing
-
+### Telegram Bot Testing (Local)
 ```bash
-# Test webhook locally (using ngrok)
-ngrok http 3000
-# Set webhook to https://your-ngrok.ngrok.io/api/telegram
+# Start bot in development mode
+npm run dev:bot
 
-# Or test via Telegram app
-# Send /whois google.com to your bot
+# Use ngrok to expose local server to Telegram
+ngrok http 3000
+
+# Set webhook manually (optional)
+curl "http://localhost:3000/api/telegram?set_webhook=true"
+
+# Test in Telegram: send /ping or a domain name
+```
+
+### Quick Testing with Different Environments
+```bash
+# Test against production deployment
+curl "https://whois-api-proxy.vercel.app/api/whois?domain=github.com"
+
+# Test with custom rate limit for development
+RATE_LIMIT_MAX=5 RATE_LIMIT_WINDOW=10 npm run dev
 ```
 
 ---
 
-🔄 Architecture Flow
+## 🔄 Architecture Flow
 
 ```
 ┌─────────────────┐
@@ -393,32 +411,26 @@ ngrok http 3000
          ▼
 ┌─────────────────┐
 │ 2. Path Validation│
-│    Only /api/whois │
+│    /api/whois or /api/telegram
 └────────┬────────┘
          │
          ▼
 ┌─────────────────┐
-│ 3. Method Check  │
-│    GET only      │
-└────────┬────────┘
-         │
-         ▼
-┌─────────────────┐
-│ 4. Domain Normalization │
+│ 3. Domain Normalization │
 │    HTTPS://GOOGLE.COM → google.com │
 └────────┬────────┘
          │
          ▼
 ┌─────────────────┐
-│ 5. Domain Validation │
+│ 4. Domain Validation │
 │    isFQDN() check │
 └────────┬────────┘
          │
          ▼
 ┌─────────────────┐
-│ 6. Rate Limit Check │
-│    Redis sorted set │
-│    (check-then-insert) │
+│ 5. Rate Limit Check │
+│    @upstash/ratelimit │
+│    Sliding window algorithm │
 └────────┬────────┘
          │
     ┌────┴────┐
@@ -431,7 +443,7 @@ ngrok http 3000
                  │
                  ▼
 ┌─────────────────┐
-│ 7. Cache Lookup │
+│ 6. Cache Lookup │
 │    Redis: whois:domain.com │
 └────────┬────────┘
          │
@@ -453,46 +465,82 @@ ngrok http 3000
      │       │
      ▼       ▼
 ┌─────────────────┐
-│ 8. Send Response │
+│ 7. Send Response │
 │    + Monitoring Headers │
+└─────────────────┘
+```
+
+### Telegram Bot Flow
+```
+┌─────────────────┐
+│ Telegram User   │
+│ Sends: google.com │
+└────────┬────────┘
+         │
+         ▼
+┌─────────────────┐
+│ Webhook Handler │
+│ /api/telegram  │
+└────────┬────────┘
+         │
+         ▼
+┌─────────────────┐
+│ Input Validation│
+│ + Rate Check   │
+└────────┬────────┘
+         │
+         ▼
+┌─────────────────┐
+│ Call WHOIS API │
+│ (internal or external) │
+└────────┬────────┘
+         │
+         ▼
+┌─────────────────┐
+│ Format Response │
+│ HTML + Emojis  │
+└────────┬────────┘
+         │
+         ▼
+┌─────────────────┐
+│ Send to User   │
+│ via Telegram API │
 └─────────────────┘
 ```
 
 ---
 
-🤝 Contributing
+## 🤝 Contributing
 
 Contributions are welcome! 🙌 Here's how to get started:
 
-Getting Started
+### Getting Started
+1. **Fork** the repository
+2. **Clone** your fork: `git clone https://github.com/YOUR_USERNAME/whois-api-proxy.git`
+3. **Create a branch**: `git checkout -b feat/your-amazing-feature`
+4. **Make changes** following the guidelines below
+5. **Test** your changes locally
+6. **Commit**: `git commit -m 'feat: add your amazing feature'`
+7. **Push**: `git push origin feat/your-amazing-feature`
+8. **Open a Pull Request** 🎉
 
-1. Fork the repository
-2. Clone your fork: git clone https://github.com/YOUR_USERNAME/whois-api-proxy.git
-3. Create a branch: git checkout -b feat/your-amazing-feature
-4. Make changes following the guidelines below
-5. Test your changes locally
-6. Commit: git commit -m 'feat: add your amazing feature'
-7. Push: git push origin feat/your-amazing-feature
-8. Open a Pull Request 🎉
+### Development Guidelines
+- ✅ Use ES Modules syntax (`import`/`export`)
+- ✅ Follow existing code style (async/await, consistent spacing)
+- ✅ Add JSDoc comments for new functions
+- ✅ Test rate limiting and caching behavior
+- ✅ Update this README for user-facing changes
+- ✅ Keep environment variables out of commits
+- ✅ Run `npm run lint` before submitting PRs
 
-Development Guidelines
-
-· ✅ Use ES Modules syntax (import/export)
-· ✅ Follow existing code style (async/await, consistent spacing)
-· ✅ Add JSDoc comments for new functions
-· ✅ Test rate limiting and caching behavior
-· ✅ Update this README for user-facing changes
-· ✅ Keep environment variables out of commits
-
-Good First Issues
-
-Look for issues labeled good first issue if you're new to the project!
+### Good First Issues
+Look for issues labeled [`good first issue`](https://github.com/abiqnurmagedov17/whois-api-proxy/issues?q=is%3Aissue+is%3Aopen+label%3A%22good+first+issue%22) if you're new to the project!
 
 ---
 
-📄 License
+## 📄 License
 
-This project is licensed under the MIT License — feel free to use, modify, and deploy.
+This project is licensed under the **MIT License** — feel free to use, modify, and deploy.
 
 ```
 MIT License
@@ -520,10 +568,9 @@ SOFTWARE.
 
 ---
 
-💡 Pro Tips
+## 💡 Pro Tips
 
-🎯 For Production Deployments
-
+### 🎯 For Production Deployments
 ```bash
 # Monitor Redis usage regularly
 # → https://console.upstash.com → Your Database → Metrics
@@ -542,8 +589,7 @@ SOFTWARE.
 # → Add simple header check in handleRequest()
 ```
 
-🚀 Scaling Further
-
+### 🚀 Scaling Further
 ```javascript
 // Increase rate limit for trusted IPs
 if (trustedIPs.includes(identifier)) {
@@ -557,10 +603,12 @@ if (trustedIPs.includes(identifier)) {
 // Integrate structured logging
 // Replace console.log with pino/winston for log aggregation
 // → Compatible with Axiom, Logtail, Datadog, etc.
+
+// Add Telegram bot admin commands
+// /broadcast, /stats, /reset-limit for bot management
 ```
 
-🛠️ Debugging Like a Pro
-
+### 🛠️ Debugging Like a Pro
 ```bash
 # Check caching behavior via headers
 curl -i "https://your-app.vercel.app/api/whois?domain=example.com" | grep X-Cache
@@ -577,57 +625,71 @@ vercel logs --prod | grep WHOIS-PROXY
 # 2. Temporarily break upstream URL in code
 # 3. Request again → should return stale data + X-Stale: true
 
-# Check Telegram bot webhook status
-curl "https://api.telegram.org/bot$TELEGRAM_BOT_TOKEN/getWebhookInfo"
+# Debug Telegram webhook
+# Enable TELEGRAM_DEBUG=true to log incoming updates
+```
+
+### 🔧 Local Development Shortcuts
+```bash
+# Quick test with different domains
+alias whois-test='curl -s "http://localhost:3000/api/whois?domain=$1" | jq'
+
+# Test rate limit with custom settings
+RATE_LIMIT_MAX=5 RATE_LIMIT_WINDOW=10 npm run dev
+
+# Watch for file changes + auto-restart (Node 20+)
+npm run dev  # Uses node --watch
+
+# Check Redis keys directly (requires Upstash CLI)
+npm install -g @upstash/cli
+upstash redis keys "whois:*"
+upstash redis get "ratelimit:ip:127.0.0.1"
+
+# Test Telegram bot locally with ngrok
+ngrok http 3000
+# Then set webhook to: https://your-ngrok-url.app/api/telegram
 ```
 
 ---
 
-📈 Version History
+## 🆘 Troubleshooting
 
-Version Date Changes
-2.1.0 2025 Added Telegram bot integration, updated README
-2.0.0 2025 Added @upstash/ratelimit for 100% accurate sliding window
-1.1.0 2024 Fixed rate limit logic (check-then-insert), improved result parsing, added stale-if-error
-1.0.0 2024 Initial release with Redis caching, rate limiting, and basic WHOIS proxy
-
----
-
-🆘 Troubleshooting
-
-Issue Possible Cause Solution
-Error: Failed to fetch WHOIS data Upstream API down or timeout Check FETCH_TIMEOUT, retry later, or check stale fallback
-Too many requests (immediately) Rate limit too strict or IP detection issue Check RATE_LIMIT_MAX, verify x-forwarded-for parsing
-Cache not working Redis connection issue Verify UPSTASH_REDIS_REST_URL and TOKEN in env vars
-CORS errors in browser Origin not allowed Update cors.origin config or check browser console for details
-Domain validation fails Invalid format or edge case Check validator library docs, test with isFQDN directly
-Telegram bot not responding Webhook not set or wrong token Check getWebhookInfo, verify TELEGRAM_BOT_TOKEN
-Bot returns 404 Wrong webhook URL Ensure WEBHOOK_URL matches deployed endpoint
+| Issue | Possible Cause | Solution |
+|-------|---------------|----------|
+| `Error: Failed to fetch WHOIS data` | Upstream API down or timeout | Check `FETCH_TIMEOUT`, retry later, or check stale fallback |
+| `Too many requests` (immediately) | Rate limit too strict or IP detection issue | Check `RATE_LIMIT_MAX`, verify `x-forwarded-for` parsing |
+| Cache not working | Redis connection issue | Verify `UPSTASH_REDIS_REST_URL` and `TOKEN` in env vars |
+| CORS errors in browser | Origin not allowed | Update `cors.origin` config or check browser console for details |
+| Domain validation fails | Invalid format or edge case | Check `validator` library docs, test with `isFQDN` directly |
+| Telegram bot not responding | Webhook not set or token invalid | Verify `TELEGRAM_BOT_TOKEN`, check webhook with `/getWebhookInfo` |
+| Bot commands not working | Message filter misconfigured | Check `telegraf/filters` import and message handler logic |
 
 ---
 
-🌍 Philosophy: Public WHOIS data should be accessible — reliably, responsibly, and with good engineering practices. This proxy exists to make that easier.
+> 🌍 **Philosophy**: Public WHOIS data should be accessible — reliably, responsibly, and with good engineering practices. This proxy exists to make that easier.
 
-Built with ❤️ using Node.js, Upstash Redis, Telegraf, and lessons learned from debugging production systems at 3 AM.
+> Built with ❤️ using **Node.js 20**, **Upstash Redis**, **Telegraf**, and lessons learned from debugging production systems at 3 AM.
 
-Maintained by @abiqnurmagedov17 🚀
+*Maintained by [@abiqnurmagedov17](https://github.com/abiqnurmagedov17)* 🚀
 
 ---
 
-💬 Have questions or feedback?
-Open an issue or reach out via @abiq.17_ Instagram 🙌🏻
+## 📈 Version History
 
-```
+| Version | Date | Changes |
+|---------|------|---------|
+| `2.1.0` | 2024 | ➕ Telegram Bot integration, ⚡ Sliding window rate limiting via `@upstash/ratelimit`, 🔄 Node.js 20.x runtime, 🧹 ESLint config, 📦 New scripts (`dev:bot`, `test`, `deploy`, `lint`) |
+| `2.0.0` | 2024 | 🔄 Migrated to ES Modules, ♻️ Stale-if-error resilience, 📊 Enhanced monitoring headers |
+| `1.1.0` | 2024 | Fixed rate limit logic (check-then-insert), improved result parsing |
+| `1.0.0` | 2024 | Initial release with Redis caching, rate limiting, and basic WHOIS proxy |
 
-## 📝 Perubahan yang Ditambahkan
+---
 
-| Bagian | Perubahan |
-|--------|-----------|
-| **Header** | Tambah "Telegram Bot" dan link bot |
-| **Features** | Tambah baris "Telegram Bot" |
-| **Bagian Baru** | 📱 Telegram Bot (commands, example, setup) |
-| **Project Structure** | Tambah `api/telegram.js` |
-| **Configuration** | Tambah `TELEGRAM_BOT_TOKEN` dan `WEBHOOK_URL` |
-| **Testing** | Tambah "Telegram Bot Testing" |
-| **Troubleshooting** | Tambah 2 baris tentang bot |
-| **Version History** | Tambah `2.1.0` |
+> 💬 **Have questions or feedback?**  
+> Open an [issue](https://github.com/abiqnurmagedov17/whois-api-proxy/issues) or reach out via [@ab.iqqq](https://instagram.com/ab.iqqq) on Instagram 🙌🏻
+
+---
+
+<p align="center">
+  <sub>Built with ⚡ by <a href="https://github.com/abiqnurmagedov17">Abiq</a> • <a href="https://rommiui.com">rommiui.com</a></sub>
+</p>
