@@ -1,5 +1,3 @@
-import http from 'http';
-import { parse } from 'url';
 import Cors from 'cors';
 import isFQDN from 'validator/lib/isFQDN.js';
 import { Redis } from '@upstash/redis';
@@ -16,12 +14,11 @@ const redis = new Redis({
 // CONFIG
 // ─────────────────────────────────────────────────────
 const cors = Cors({
-  origin: '*',
+  origin: ['https://whois-api-proxy.vercel.app', 'http://localhost:3000'],
   methods: ['GET', 'OPTIONS'],
   allowedHeaders: ['Content-Type'],
 });
 
-const PORT = parseInt(process.env.PORT || '3000', 10);
 const CACHE_TTL = parseInt(process.env.CACHE_TTL || '3600', 10);
 const FETCH_TIMEOUT = parseInt(process.env.FETCH_TIMEOUT || '10000', 10);
 const RATE_LIMIT_MAX = parseInt(process.env.RATE_LIMIT_MAX || '30', 10);
@@ -47,39 +44,41 @@ function normalizeDomain(domain) {
     .replace(/\/$/, '')
     .split('/')[0] || '';
 }
+
 function getIdentifier(req) {
   const forwarded = req.headers['x-forwarded-for'];
   return (
-    req.socket?.remoteAddress ||
     (typeof forwarded === 'string' ? forwarded.split(',')[0].trim() : null) ||
+    req.socket?.remoteAddress ||
     'unknown'
   );
 }
 
 function sendJson(res, statusCode, data, headers = {}) {
-  res.writeHead(statusCode, {
-    'Content-Type': 'application/json',
-    ...headers,
+  res.setHeader('Content-Type', 'application/json');
+  Object.entries(headers).forEach(([key, value]) => {
+    res.setHeader(key, value);
   });
-  res.end(JSON.stringify(data));
+  res.status(statusCode).json(data);
 }
 
 // ─────────────────────────────────────────────────────
-// RATE LIMIT (Upstash Redis) - FIXED & CLEAN
+// RATE LIMIT (ATOMIC - Fix Race Condition)
 // ─────────────────────────────────────────────────────
 async function checkRateLimit(identifier) {
   const key = `rl:${identifier}`;
   const now = Date.now();
   const windowStart = now - RATE_LIMIT_WINDOW * 1000;
 
-  // Step 1: Cleanup expired + count current requests
+  // SATUKAN dalam 1 pipeline (ATOMIC)
   const pipeline = redis.pipeline();
   pipeline.zremrangebyscore(key, 0, windowStart);
+  pipeline.zadd(key, { score: now, member: `${now}-${Math.random()}` });
   pipeline.zcount(key, windowStart, now);
+  pipeline.expire(key, RATE_LIMIT_WINDOW + 10);
 
   const results = await pipeline.exec();
 
-  // Safe parser for Upstash SDK result formats
   const parseResult = (res) => {
     if (res === null || res === undefined) return null;
     if (Array.isArray(res) && res.length >= 2) return res[1];
@@ -87,29 +86,19 @@ async function checkRateLimit(identifier) {
     return res;
   };
 
-  const count = parseResult(results[1]);
+  const count = parseResult(results[2]); // zcount result
 
-  // Optional debug logging (remove in production)
-  // console.log('[RATE-LIMIT]', { identifier, count, limit: RATE_LIMIT_MAX });
-
-  // Block if at or over limit
-  if (count === null || count >= RATE_LIMIT_MAX) {
+  if (count > RATE_LIMIT_MAX) {
     const oldest = await redis.zrange(key, 0, 0);
     const reset = oldest[0]
-      ? parseInt(oldest[0].split('-')[0]) + RATE_LIMIT_WINDOW * 1000      : now + RATE_LIMIT_WINDOW * 1000;
+      ? parseInt(oldest[0].split('-')[0]) + RATE_LIMIT_WINDOW * 1000
+      : now + RATE_LIMIT_WINDOW * 1000;
     return { allowed: false, remaining: 0, reset };
   }
 
-  // Allowed → insert request timestamp
-  await redis
-    .pipeline()
-    .zadd(key, { score: now, member: `${now}-${Math.random()}` })
-    .expire(key, RATE_LIMIT_WINDOW + 10)
-    .exec();
-
   return {
     allowed: true,
-    remaining: RATE_LIMIT_MAX - count - 1,
+    remaining: RATE_LIMIT_MAX - count,
     reset: now + RATE_LIMIT_WINDOW * 1000,
   };
 }
@@ -141,11 +130,12 @@ async function fetchWithRetry(url, retries = 3) {
     try {
       const res = await fetch(url, {
         signal: controller.signal,
-        headers: { 'User-Agent': 'WHOIS-Proxy/1.0 (+https://domainlu.com)' },
+        headers: { 'User-Agent': 'WHOIS-Proxy/1.0' },
       });
       clearTimeout(timeout);
 
-      if (!res.ok) throw new Error(`API responded with status ${res.status}`);      return await res.json();
+      if (!res.ok) throw new Error(`API responded with status ${res.status}`);
+      return await res.json();
     } catch (err) {
       clearTimeout(timeout);
       lastError = err;
@@ -157,43 +147,35 @@ async function fetchWithRetry(url, retries = 3) {
 }
 
 // ─────────────────────────────────────────────────────
-// REQUEST HANDLER
+// MAIN HANDLER (for Vercel)
 // ─────────────────────────────────────────────────────
-async function handleRequest(req, res) {
+export default async function handler(req, res) {
   const start = Date.now();
-  const { pathname, query } = parse(req.url, true);
+  const domain = req.query?.domain;
 
-  // CORS preflight
-  if (req.method === 'OPTIONS') {
-    return runMiddleware(req, res, cors).then(() => {
-      res.writeHead(204);
-      res.end();
-    });
-  }
-
-  // CORS + main logic
+  // CORS
   await runMiddleware(req, res, cors);
 
-  // Only handle /api/whois
-  if (pathname !== '/api/whois') {
-    return sendJson(res, 404, { error: 'Not found' });
+  // OPTIONS preflight
+  if (req.method === 'OPTIONS') {
+    return res.status(204).end();
   }
 
-  // Method check
+  // Only GET method
   if (req.method !== 'GET') {
     return sendJson(res, 405, { error: 'Method not allowed' });
   }
 
   // Validate domain
-  const rawDomain = query?.domain;
-  if (!rawDomain || typeof rawDomain !== 'string') {
+  if (!domain || typeof domain !== 'string') {
     return sendJson(res, 400, { error: 'Domain parameter is required' });
   }
 
-  const domain = normalizeDomain(rawDomain);
-  if (!isFQDN(domain, { require_tld: true })) {
+  const normalizedDomain = normalizeDomain(domain);
+  if (!isFQDN(normalizedDomain, { require_tld: true })) {
     return sendJson(res, 400, { error: 'Invalid domain format' });
   }
+
   const identifier = getIdentifier(req);
 
   // Rate limit
@@ -212,38 +194,33 @@ async function handleRequest(req, res) {
   }
 
   // Cache check
-  const cacheKey = `whois:${domain}`;
+  const cacheKey = `whois:${normalizedDomain}`;
   const cached = await getCache(cacheKey);
 
   if (cached) {
-    const isStale = Date.now() - cached.timestamp > CACHE_TTL * 1000;
-    const headers = {
-      ...rateHeaders,
-      'X-Cache': 'HIT',
-      'X-Cache-Age': String(Math.floor((Date.now() - cached.timestamp) / 1000)),
-      'X-Response-Time': `${Date.now() - start}ms`,
-    };
+    const cacheAge = Date.now() - cached.timestamp;
+    const isStale = cacheAge > CACHE_TTL * 1000;
 
     if (isStale) {
-      headers['X-Stale'] = 'true';
-      // Background refresh (fire & forget)
-      fetchWithRetry(
-        `https://rewhois.com/api/whois?domain=${encodeURIComponent(domain)}`
-      )
+      // Background refresh
+      fetchWithRetry(`https://rewhois.com/api/whois?domain=${encodeURIComponent(normalizedDomain)}`)
         .then((data) => setCache(cacheKey, data))
         .catch((err) => console.error('[STALE-REFRESH]', err));
     }
 
-    return sendJson(res, 200, cached, headers);
+    return sendJson(res, 200, cached, {
+      ...rateHeaders,
+      'X-Cache': 'HIT',
+      'X-Cache-Age': String(Math.floor(cacheAge / 1000)),
+      'X-Response-Time': `${Date.now() - start}ms`,
+    });
   }
 
   // Fetch upstream
   try {
-    const url = `https://rewhois.com/api/whois?domain=${encodeURIComponent(
-      domain
-    )}`;
-    const data = await fetchWithRetry(url);
-    setCache(cacheKey, data); // fire & forget
+    const upstreamUrl = `https://rewhois.com/api/whois?domain=${encodeURIComponent(normalizedDomain)}`;
+    const data = await fetchWithRetry(upstreamUrl);
+    setCache(cacheKey, data);
 
     return sendJson(res, 200, data, {
       ...rateHeaders,
@@ -253,9 +230,8 @@ async function handleRequest(req, res) {
   } catch (error) {
     console.error('[WHOIS-PROXY]', {
       error: error.message,
-      domain,
+      domain: normalizedDomain,
       ip: identifier,
-      duration: Date.now() - start,
     });
 
     // Stale-if-error fallback
@@ -267,7 +243,6 @@ async function handleRequest(req, res) {
       }, {
         ...rateHeaders,
         'X-Cache': 'STALE',
-        'X-Stale': 'true',
         'X-Response-Time': `${Date.now() - start}ms`,
       });
     }
@@ -276,31 +251,8 @@ async function handleRequest(req, res) {
     return sendJson(
       res,
       isTimeout ? 504 : 500,
-      {
-        error: isTimeout ? 'Request timeout' : 'Failed to fetch WHOIS data',
-      },
+      { error: isTimeout ? 'Request timeout' : 'Failed to fetch WHOIS data' },
       rateHeaders
     );
   }
 }
-
-// ─────────────────────────────────────────────────────
-// CREATE SERVER
-// ─────────────────────────────────────────────────────
-const server = http.createServer(async (req, res) => {
-  try {
-    await handleRequest(req, res);
-  } catch (err) {
-    console.error('[SERVER-ERR]', err);
-    sendJson(res, 500, { error: 'Internal server error' });  }
-});
-
-server.listen(PORT, () => {
-  console.log(`🚀 WHOIS Proxy running at http://localhost:${PORT}/api/whois`);
-});
-
-// Graceful shutdown
-process.on('SIGTERM', () => {
-  console.log('🔌 Shutting down gracefully...');
-  server.close(() => process.exit(0));
-});
