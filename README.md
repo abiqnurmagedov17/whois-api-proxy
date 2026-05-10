@@ -1,7 +1,3 @@
-Saya akan perbarui README.md dengan menambahkan informasi tentang Telegram Bot yang sudah Anda buat.
-
-✅ Updated README.md
-
 ```markdown
 # 🌐 WHOIS API Proxy + Telegram Bot
 
