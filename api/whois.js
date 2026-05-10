@@ -14,7 +14,7 @@ const redis = new Redis({
 // CONFIG
 // ─────────────────────────────────────────────────────
 const cors = Cors({
-  origin: ['https://whois-api-proxy.vercel.app', 'http://localhost:3000'],
+  origin: ['domainlu', 'http://localhost:3000'],
   methods: ['GET', 'OPTIONS'],
   allowedHeaders: ['Content-Type'],
 });
