@@ -29,7 +29,7 @@ const ratelimit = new Ratelimit({
 const cors = Cors({
   origin: [
     'https://whois-api-proxy.vercel.app',
-    'https://whois-api-proxy.vercel.app/api/telegram',
+    'http://localhost:3000',
     'http://localhost:5500',
     'http://localhost:7700',
   ],
