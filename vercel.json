@@ -1,5 +1,21 @@
 {
+  "functions": {
+    "api/whois.js": {
+      "runtime": "nodejs20.x"
+    },
+    "api/telegram.js": {
+      "runtime": "nodejs20.x"
+    }
+  },
   "rewrites": [
+    {
+      "source": "/api/whois",
+      "destination": "/api/whois"
+    },
+    {
+      "source": "/api/telegram",
+      "destination": "/api/telegram"
+    },
     {
       "source": "/api/(.*)",
       "destination": "/api/whois"
